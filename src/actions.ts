@@ -1,6 +1,7 @@
 import type { CompanionActionDefinitions } from '@companion-module/base'
 import type { OBSBOTInstance } from './main.js'
 import { Models } from './models.js'
+import { SHUTTER_SPEED_TABLE, nextShutterIndex, ISO_STEPS, EV_COMP_STEPS } from './http-polling.js'
 
 export function UpdateActions(self: OBSBOTInstance): void {
 	//get the model from the config and then get the model from the Models array
@@ -764,6 +765,170 @@ export function UpdateActions(self: OBSBOTInstance): void {
 		},
 	}
 
+	// ── Stepwise increment / decrement actions ─────────────────────────
+
+	actions.shutterSpeedUp = {
+		name: 'Image | Shutter Speed Up (faster)',
+		description: 'Increase shutter speed by one step (shorter exposure)',
+		options: [],
+		callback: async () => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step shutter speed: failed to fetch camera status')
+				return
+			}
+			const currentIndex = status.exposure.shutter_value
+			const next = nextShutterIndex(currentIndex, -1)
+			if (!next) {
+				self.log('info', `Shutter speed already at fastest (index ${currentIndex})`)
+				return
+			}
+			self.log('info', `Shutter speed up: 1/${SHUTTER_SPEED_TABLE.get(currentIndex) ?? currentIndex} → 1/${next.speed}`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetShutterSpeed', [{ type: 'i', value: Math.round(next.speed) }])
+		},
+	}
+
+	actions.shutterSpeedDown = {
+		name: 'Image | Shutter Speed Down (slower)',
+		description: 'Decrease shutter speed by one step (longer exposure)',
+		options: [],
+		callback: async () => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step shutter speed: failed to fetch camera status')
+				return
+			}
+			const currentIndex = status.exposure.shutter_value
+			const maxIndex = status.exposure.shutter_max
+			const next = nextShutterIndex(currentIndex, 1)
+			if (!next || next.index > maxIndex) {
+				self.log('info', `Shutter speed already at slowest allowed (index ${currentIndex}, max ${maxIndex})`)
+				return
+			}
+			self.log(
+				'info',
+				`Shutter speed down: 1/${SHUTTER_SPEED_TABLE.get(currentIndex) ?? currentIndex} → 1/${next.speed}`,
+			)
+			self.sendCommand('/OBSBOT/WebCam/General/SetShutterSpeed', [{ type: 'i', value: Math.round(next.speed) }])
+		},
+	}
+
+	actions.isoUp = {
+		name: 'Image | ISO Up',
+		description: 'Increase ISO by one step',
+		options: [],
+		callback: async () => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step ISO: failed to fetch camera status')
+				return
+			}
+			const currentIso = status.exposure.iso
+			// Find the first step strictly above the current value
+			const idx = ISO_STEPS.findIndex((v) => v > currentIso)
+			if (idx === -1) {
+				self.log('info', `ISO already at maximum (${currentIso})`)
+				return
+			}
+			const newIso = ISO_STEPS[idx]
+			self.log('info', `ISO up: ${currentIso} → ${newIso}`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetISO', [{ type: 'i', value: newIso }])
+		},
+	}
+
+	actions.isoDown = {
+		name: 'Image | ISO Down',
+		description: 'Decrease ISO by one step',
+		options: [],
+		callback: async () => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step ISO: failed to fetch camera status')
+				return
+			}
+			const currentIso = status.exposure.iso
+			// Find the last step strictly below the current value
+			let idx = -1
+			for (let i = ISO_STEPS.length - 1; i >= 0; i--) {
+				if (ISO_STEPS[i] < currentIso) {
+					idx = i
+					break
+				}
+			}
+			if (idx === -1) {
+				self.log('info', `ISO already at minimum (${currentIso})`)
+				return
+			}
+			const newIso = ISO_STEPS[idx]
+			self.log('info', `ISO down: ${currentIso} → ${newIso}`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetISO', [{ type: 'i', value: newIso }])
+		},
+	}
+
+	actions.evCompUp = {
+		name: 'Image | Exposure Compensation Up',
+		description: 'Increase exposure compensation by one step (+1/3 EV)',
+		options: [],
+		callback: async () => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step EV compensation: failed to fetch camera status')
+				return
+			}
+			const currentScaled = Math.round(status.exposure.compensate * 10)
+			// Find nearest step, then go one higher
+			let nearest = 0
+			let minDist = Infinity
+			for (let i = 0; i < EV_COMP_STEPS.length; i++) {
+				const dist = Math.abs(EV_COMP_STEPS[i] - currentScaled)
+				if (dist < minDist) {
+					minDist = dist
+					nearest = i
+				}
+			}
+			const newIdx = nearest + 1
+			if (newIdx >= EV_COMP_STEPS.length) {
+				self.log('info', `Exposure compensation already at maximum (+${EV_COMP_STEPS[nearest] / 10})`)
+				return
+			}
+			const newVal = EV_COMP_STEPS[newIdx]
+			self.log('info', `EV comp up: ${EV_COMP_STEPS[nearest] / 10} → ${newVal / 10}`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetExposureCompensate', [{ type: 'i', value: newVal }])
+		},
+	}
+
+	actions.evCompDown = {
+		name: 'Image | Exposure Compensation Down',
+		description: 'Decrease exposure compensation by one step (-1/3 EV)',
+		options: [],
+		callback: async () => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step EV compensation: failed to fetch camera status')
+				return
+			}
+			const currentScaled = Math.round(status.exposure.compensate * 10)
+			// Find nearest step, then go one lower
+			let nearest = 0
+			let minDist = Infinity
+			for (let i = 0; i < EV_COMP_STEPS.length; i++) {
+				const dist = Math.abs(EV_COMP_STEPS[i] - currentScaled)
+				if (dist < minDist) {
+					minDist = dist
+					nearest = i
+				}
+			}
+			const newIdx = nearest - 1
+			if (newIdx < 0) {
+				self.log('info', `Exposure compensation already at minimum (${EV_COMP_STEPS[nearest] / 10})`)
+				return
+			}
+			const newVal = EV_COMP_STEPS[newIdx]
+			self.log('info', `EV comp down: ${EV_COMP_STEPS[nearest] / 10} → ${newVal / 10}`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetExposureCompensate', [{ type: 'i', value: newVal }])
+		},
+	}
+
 	actions.setAutoWhiteBalance = {
 		name: 'Image | Set Auto White Balance On/Off',
 		description: 'Set the auto white balance of the camera',
@@ -907,6 +1072,72 @@ export function UpdateActions(self: OBSBOTInstance): void {
 				value: parseInt(action.options.colorTemperature?.toString() || '0'),
 			})
 			self.sendCommand('/OBSBOT/WebCam/General/SetColorTemperature', args)
+		},
+	}
+
+	actions.colorTemperatureUp = {
+		name: 'Image | Color Temperature Up (warmer)',
+		description: 'Increase color temperature by a step (warmer / more yellow)',
+		options: [
+			{
+				type: 'number',
+				label: 'Step Size (Kelvin)',
+				id: 'step',
+				default: 100,
+				min: 50,
+				max: 1000,
+				step: 50,
+				required: true,
+			},
+		],
+		callback: async (action) => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step color temperature: failed to fetch camera status')
+				return
+			}
+			const current = status.balance.color
+			const stepSize = parseInt(action.options.step?.toString() || '100')
+			const newVal = Math.min(current + stepSize, 10000)
+			if (newVal === current) {
+				self.log('info', `Color temperature already at maximum (${current}K)`)
+				return
+			}
+			self.log('info', `Color temp up: ${current}K → ${newVal}K`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetColorTemperature', [{ type: 'i', value: newVal }])
+		},
+	}
+
+	actions.colorTemperatureDown = {
+		name: 'Image | Color Temperature Down (cooler)',
+		description: 'Decrease color temperature by a step (cooler / more blue)',
+		options: [
+			{
+				type: 'number',
+				label: 'Step Size (Kelvin)',
+				id: 'step',
+				default: 100,
+				min: 50,
+				max: 1000,
+				step: 50,
+				required: true,
+			},
+		],
+		callback: async (action) => {
+			const status = await self.getCameraStatus(0)
+			if (!status) {
+				self.log('warn', 'Cannot step color temperature: failed to fetch camera status')
+				return
+			}
+			const current = status.balance.color
+			const stepSize = parseInt(action.options.step?.toString() || '100')
+			const newVal = Math.max(current - stepSize, 2000)
+			if (newVal === current) {
+				self.log('info', `Color temperature already at minimum (${current}K)`)
+				return
+			}
+			self.log('info', `Color temp down: ${current}K → ${newVal}K`)
+			self.sendCommand('/OBSBOT/WebCam/General/SetColorTemperature', [{ type: 'i', value: newVal }])
 		},
 	}
 

@@ -5,11 +5,15 @@ import { UpdateActions } from './actions.js'
 import { UpdateVariableDefinitions } from './variables.js'
 import { InitConnection, SendCommand } from './api.js'
 import { UpdatePresets } from './presets.js'
+import { StartHttpPolling, StopHttpPolling, getCameraStatus, type CameraStatus } from './http-polling.js'
 
 export class OBSBOTInstance extends InstanceBase<ModuleConfig> {
 	config!: ModuleConfig // Setup in init()
 	_socket: any // Socket for communication, type can be more specific based on implementation
 	DEVICES: [] = [] // Device list, type can be more specific based on implementation
+	_pollTimer: ReturnType<typeof setInterval> | undefined
+	_cameraStatus: CameraStatus | undefined
+	_cameraStatusUpdatedAt: number | undefined
 
 	constructor(internal: unknown) {
 		super(internal)
@@ -22,9 +26,11 @@ export class OBSBOTInstance extends InstanceBase<ModuleConfig> {
 		this.updatePresets() // export presets
 		this.updateStatus(InstanceStatus.Connecting)
 		await this.initConnection()
+		StartHttpPolling(this)
 	}
 	// When module gets deleted
 	async destroy(): Promise<void> {
+		StopHttpPolling(this)
 		this.log('debug', 'destroy')
 	}
 
@@ -35,6 +41,7 @@ export class OBSBOTInstance extends InstanceBase<ModuleConfig> {
 		this.updatePresets()
 		this.updateStatus(InstanceStatus.Connecting)
 		await this.initConnection()
+		StartHttpPolling(this)
 	}
 
 	// Return config fields for web config
@@ -60,6 +67,23 @@ export class OBSBOTInstance extends InstanceBase<ModuleConfig> {
 
 	sendCommand(address: string, args: OSCArgument[]): void {
 		SendCommand(this, address, args)
+	}
+
+	/**
+	 * Get the current camera status for use in action callbacks.
+	 * Returns cached data if fresh enough, otherwise fetches from the camera.
+	 * @param maxAgeMs  max cache age in ms (default 2000, use 0 to force fresh fetch)
+	 *
+	 * Example usage in an action callback:
+	 *   callback: async (action) => {
+	 *       const status = await self.getCameraStatus(0)
+	 *       if (!status) return
+	 *       const currentIso = status.exposure.iso
+	 *       // compute new value, send command...
+	 *   }
+	 */
+	async getCameraStatus(maxAgeMs: number = 2000): Promise<CameraStatus | null> {
+		return getCameraStatus(this, maxAgeMs)
 	}
 }
 

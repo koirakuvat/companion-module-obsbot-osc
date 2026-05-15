@@ -9,6 +9,7 @@ export interface ModuleConfig {
 	model: string
 	device: number
 	verbose: boolean
+	pollInterval: number
 }
 
 export function GetConfigFields(): SomeCompanionConfigField[] {
@@ -94,6 +95,17 @@ export function GetConfigFields(): SomeCompanionConfigField[] {
 			width: 12,
 			label: ' ',
 			value: '<hr />',
+		},
+		{
+			type: 'number',
+			id: 'pollInterval',
+			label: 'Status Poll Interval (seconds)',
+			tooltip:
+				'How often to poll the camera HTTP endpoint for status variables (ISO, shutter, exposure, etc). Set to 0 to disable. Only works with direct hardware connections (Tail 2, Tail Air).',
+			default: 5,
+			min: 0,
+			max: 60,
+			width: 4,
 		},
 		{
 			type: 'checkbox',
